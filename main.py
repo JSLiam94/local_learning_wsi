@@ -30,6 +30,7 @@ def get_A_transforms():
     transform_train_fn = A.Compose([
         # For smaller WSI, we set a conservative scale, otherwise, it may result in too small images
         RandomCropEdge(scale=(0.5, 1.0), scale_for_small=(0.9, 1.0), small_length=3000, p=0.6),
+        #RandomCropEdge(scale=(0.5, 1.0), scale_for_small=(0.9, 1.0), small_length=3000, p=0.6),
         A.Flip(p=0.75),
         A.RandomRotate90(),
         A.ColorJitter(0.1, 0.1, 0.1, 0.1),
@@ -47,22 +48,22 @@ def get_A_transforms():
 
 def get_metric(num_classes):
     metric_train = MetricCollection({
-        "Accuracy": Accuracy(num_classes=num_classes),
-        "BA": Accuracy(num_classes=num_classes, average="macro"),
+        "Accuracy": Accuracy(num_classes=num_classes,task="multiclass"),
+        "BA": Accuracy(num_classes=num_classes, average="macro",task="multiclass"),
         # "F1": F1(num_classes=num_classes),
-        "AUROC": AUROC(num_classes=num_classes),
+        "AUROC": AUROC(num_classes=num_classes,task="multiclass"),
     }, postfix='/train')
     metric_eval = MetricCollection({
-        "Accuracy": Accuracy(num_classes=num_classes),
-        "BA": Accuracy(num_classes=num_classes, average="macro"),
+        "Accuracy": Accuracy(num_classes=num_classes,task="multiclass"),
+        "BA": Accuracy(num_classes=num_classes, average="macro",task="multiclass"),
         # "F1": F1(num_classes=num_classes),
-        "AUROC": AUROC(num_classes=num_classes),
+        "AUROC": AUROC(num_classes=num_classes,task="multiclass"),
     }, postfix='/validation')
     metric_test = MetricCollection({
-        "Accuracy": Accuracy(num_classes=num_classes),
-        "BA": Accuracy(num_classes=num_classes, average="macro"),
+        "Accuracy": Accuracy(num_classes=num_classes,task="multiclass"),
+        "BA": Accuracy(num_classes=num_classes, average="macro",task="multiclass"),
         # "F1": F1(num_classes=num_classes),
-        "AUROC": AUROC(num_classes=num_classes),
+        "AUROC": AUROC(num_classes=num_classes,task="multiclass"),
     }, prefix='test/')
     return metric_train, metric_eval, metric_test
 
@@ -143,7 +144,6 @@ def get_loss_networks(K, class_num, weight=None):
     )
     return loss_net
 
-
 def main(args):
     data_module = CsvDataModule(args.dataset_root, args.dataset_csv, args.batch_size, cus_transforms=get_A_transforms(),
                                 num_workers=args.num_workers)
@@ -159,20 +159,32 @@ def main(args):
     trainer_model = LocalModule(backbone_model, loss_networks, get_metric(num_classes), args, num_classes,
                                 valid_as_train=True)
 
-    logger = WandbLogger(project=args.project_name, name=args.run_name, log_model=True)
+    #logger = WandbLogger(project=args.project_name, name=args.run_name, log_model=True)
 
     trainer = pl.Trainer(default_root_dir=os.path.join(args.output_dir, args.run_name), gpus=args.gpu_id,
                          max_epochs=args.epochs, log_every_n_steps=50, num_sanity_val_steps=0,
                          precision=args.precision,
-                         logger=logger,
+                         #logger=logger,
                          callbacks=lr_monitor,
-                         progress_bar_refresh_rate=None if args.progressive else 0)
+                         progress_bar_refresh_rate=10)
 
+    # Load checkpoint if specified
+    if args.checkpoint_path:
+        checkpoint = torch.load(args.checkpoint_path)
+        trainer_model.load_state_dict(checkpoint['state_dict'])
+
+    # Evaluate on val set
+    #trainer.validate(trainer_model, data_module)
+
+    # Evaluate on test set
+    #trainer.test(trainer_model, data_module)
     trainer.fit(trainer_model, data_module)
+
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint_path', type=str, default=None, help='Path to the checkpoint file to load for evaluation')
     args = get_arguments(parser)
-    # save_parameters(args)
+    save_parameters(args)
     main(args)
